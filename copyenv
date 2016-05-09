@@ -1,0 +1,61 @@
+#!/usr/bin/python3
+
+import copyenv
+import argparse
+import os
+import stat
+
+usage = """%(prog)s [options] [pid|name] 
+
+Output the environment of a program as a sh or csh snippet
+
+%(prog)s [pid|name] -- command [args...]
+
+Copy the environment of a program and run a command"""
+
+p = argparse.ArgumentParser(usage=usage)
+g = p.add_mutually_exclusive_group()
+g.add_argument('-s','--sh', action='store_true',
+               help='Output sh style commands')
+g.add_argument('-c','--csh', action='store_true',
+               help='Output csh style commands')
+p.add_argument('-e','--export', action='store_true',
+               help='sh/csh command will export variables')
+p.add_argument('--setuid', action='store_true',
+               help="setuid to the process owner before executing the command")
+p.add_argument("process")
+p.add_argument("command", nargs='*')
+
+args = p.parse_args()
+if not args.sh and not args.csh and not args.command:
+    if os.environ['SHELL'].endswith('csh'):
+        args.csh = True
+    else:
+        args.sh = True
+
+if args.process.isdigit():
+    pid = int(args.process)
+else:
+    pid = copyenv.find_process(args.process)
+env = copyenv.from_pid(pid, update=bool(args.command))
+
+if args.command:
+    if '/' not in args.command[0]:
+        for path in os.environ.get('PATH', '').split(':'):
+            cmd = os.path.join(path, args.command[0])
+            if os.access(cmd, os.X_OK):
+                args.command[0] = cmd
+                break
+        else:
+            raise EnvironmentError("Executable %s not found on $PATH" % args.command[0])
+    if args.setuid:
+        st = os.stat('/proc/%d' % pid)
+        os.setgid(st[stat.ST_GID])
+        os.setuid(st[stat.ST_UID])
+    os.execve(args.command[0], args.command, os.environ)
+
+if args.sh:
+    print("\n".join(copyenv.to_sh(env, args.export)))
+elif args.csh:
+    print("moo")
+    print("\n".join(copyenv.to_csh(env, args.export)))
